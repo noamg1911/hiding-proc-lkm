@@ -16,8 +16,8 @@ MODULE_AUTHOR("Noam");
 MODULE_DESCRIPTION("Basic Kernel Module");
 
 struct linux_dirent {
-    long            d_ino;
-    off_t           d_off;
+    unsigned long   d_ino;
+    unsigned long   d_off;
     unsigned short  d_reclen;
     char            d_name[];
 };
